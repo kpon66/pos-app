@@ -1,0 +1,2032 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>千葉能登マルシェ - POSレジ</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Vue 3 CDN -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Zen Maru Gothic', 'Plus Jakarta Sans', sans-serif;
+      user-select: none;
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased min-h-screen flex flex-col">
+
+  <div id="app" class="flex-1 flex flex-col h-screen overflow-hidden">
+    
+    <!-- ヘッダー / メニューバー -->
+    <header class="bg-slate-900 text-white shadow-md flex-shrink-0 z-20 border-b border-emerald-900/50">
+      <div class="max-w-7xl mx-auto px-3 sm:px-4 h-16 flex items-center justify-between gap-2 overflow-hidden">
+        
+        <!-- ロゴ＆タイトル -->
+        <div class="flex items-center shrink-0 space-x-2">
+          <h1 class="text-base sm:text-xl font-black tracking-wide leading-tight whitespace-nowrap">千葉能登マルシェ</h1>
+          <!-- クラウド同期インジケーター -->
+          <button 
+            v-if="gasUrl" 
+            @click="fetchFromGoogleSheets" 
+            :title="isSyncing ? '同期中...' : 'クラウドから最新データを手動取得'" 
+            class="text-xs px-2 py-0.5 rounded-full flex items-center space-x-1 border transition"
+            :class="isSyncing ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 animate-pulse' : 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/30'">
+            <i class="fa-solid" :class="isSyncing ? 'fa-arrows-rotate animate-spin' : 'fa-cloud'"></i>
+            <span class="hidden sm:inline text-[10px] font-bold">{{ isSyncing ? '同期中...' : 'クラウド連携中' }}</span>
+          </button>
+        </div>
+
+        <!-- メニュータブボタン (レジと取引履歴のみ) -->
+        <nav class="flex items-center space-x-1 bg-slate-800 p-1 rounded-xl overflow-x-auto shrink-0 border border-slate-700/60">
+          <button 
+            @click="selectTab('pos')"
+            :class="activeTab === 'pos' ? 'bg-emerald-500 text-slate-950 font-bold shadow-lg shadow-emerald-950/30' : 'text-slate-300 hover:text-white hover:bg-slate-700/50'"
+            class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-all flex items-center space-x-1.5 whitespace-nowrap shrink-0">
+            <i class="fa-solid fa-cash-register"></i>
+            <span>レジ</span>
+            <span v-if="cartTotalQty > 0" class="ml-0.5 px-1.5 py-0.5 text-[10px] sm:text-xs bg-slate-950 text-emerald-300 rounded-full font-bold">
+              {{ cartTotalQty }}
+            </span>
+          </button>
+
+          <button 
+            @click="selectTab('history')"
+            :class="activeTab === 'history' ? 'bg-emerald-500 text-slate-950 font-bold shadow-lg shadow-emerald-950/30' : 'text-slate-300 hover:text-white hover:bg-slate-700/50'"
+            class="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm transition-all flex items-center space-x-1.5 whitespace-nowrap shrink-0">
+            <i class="fa-solid fa-receipt"></i>
+            <span>取引履歴</span>
+          </button>
+        </nav>
+
+        <!-- 営業ステータス ＆ 設定ボタン (常時表示) -->
+        <div class="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+          <div class="hidden sm:flex items-center space-x-1.5 bg-slate-800/90 px-2.5 py-1 rounded-xl border border-slate-700 text-xs">
+            <span class="w-2 h-2 rounded-full" :class="isOperating ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'"></span>
+            <span class="font-bold" :class="isOperating ? 'text-emerald-400' : 'text-rose-400'">{{ isOperating ? '営業中' : '準備中' }}</span>
+          </div>
+
+          <!-- スマホでも絶対に隠れない設定ボタン -->
+          <button 
+            @click="openSettings" 
+            class="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-bold flex items-center space-x-1 transition shadow shrink-0 text-xs sm:text-sm"
+            title="営業設定・管理者">
+            <i class="fa-solid fa-gear text-sm sm:text-base"></i>
+            <span>設定</span>
+          </button>
+
+          <!-- 売上速報クイック表示 -->
+          <div class="hidden lg:flex items-center space-x-4 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 shrink-0">
+            <div class="text-xs text-slate-400">本日の総売上</div>
+            <div class="text-lg font-bold text-emerald-400">¥ {{ totalSalesAmount.toLocaleString() }}</div>
+          </div>
+        </div>
+
+      </div>
+    </header>
+
+    <!-- メインコンテンツエリア -->
+    <main class="flex-1 overflow-hidden relative">
+
+      <!-- 営業準備中(オフ) オーバーレイ -->
+      <div v-if="!isOperating && activeTab === 'pos'" class="absolute inset-0 bg-slate-900/60 backdrop-blur-xs z-30 flex flex-col items-center justify-center text-white p-6 text-center">
+        <div class="w-16 h-16 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-3xl mb-4 border border-emerald-500/30">
+          <i class="fa-solid fa-store-slash"></i>
+        </div>
+        <h2 class="text-2xl font-black mb-2">ただいま準備中です</h2>
+        <p class="text-sm text-slate-300 max-w-sm mb-4">現在営業を停止しています。</p>
+        <button @click="openSettings" class="px-5 py-2.5 bg-emerald-500 text-slate-950 font-bold rounded-xl hover:bg-emerald-400 transition text-sm flex items-center space-x-2 shadow-lg">
+          <i class="fa-solid fa-lock"></i>
+          <span>営業設定を開く</span>
+        </button>
+      </div>
+
+      <!-- ================= 1. レジ (POS) 画面 ================= -->
+      <div v-show="activeTab === 'pos'" class="h-full flex flex-col md:flex-row overflow-hidden relative pb-16 md:pb-0">
+        
+        <!-- 左側：商品選択エリア -->
+        <div class="flex-1 flex flex-col h-full bg-slate-100 overflow-hidden border-r border-slate-200">
+
+          <!-- 商品グリッドリスト -->
+          <div class="flex-1 overflow-y-auto p-2.5 sm:p-4 pb-20 md:pb-4">
+            <div v-if="items.length === 0" class="h-full flex flex-col items-center justify-center text-slate-400 py-12">
+              <i class="fa-solid fa-box-open text-5xl mb-3"></i>
+              <p>登録されている商品がありません</p>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
+              <div 
+                v-for="item in items" 
+                :key="item.id"
+                @click="addToCart(item)"
+                :class="[
+                  item.stock <= 0 ? 'opacity-50 cursor-not-allowed bg-slate-200' : 'cursor-pointer hover:shadow-md hover:border-emerald-500 active:scale-[0.98] bg-white',
+                  getCategoryBorderClass(item.category)
+                ]"
+                class="relative rounded-2xl border-2 p-2 sm:p-2.5 transition-all duration-150 flex flex-col justify-between group overflow-hidden">
+                
+                <!-- ジャンルバッジ & 在庫 -->
+                <div class="flex items-center justify-between mb-1">
+                  <span :class="getCategoryBadgeClass(item.category)" class="text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                    {{ getCategoryLabel(item.category) }}
+                  </span>
+                  <span :class="item.stock <= 5 ? 'bg-red-100 text-red-600 font-bold' : 'bg-slate-100 text-slate-600'" class="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded-full">
+                    残 {{ item.stock }}
+                  </span>
+                </div>
+
+                <!-- 商品画像 or アイコン -->
+                <div class="w-full h-14 sm:h-16 rounded-lg overflow-hidden mb-1 bg-slate-50 flex items-center justify-center relative shrink-0">
+                  <img v-if="item.image" :src="item.image" :alt="item.name" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" @error="handleImageError($event)">
+                  <div v-else class="text-slate-300 text-xl sm:text-2xl">
+                    <i :class="getCategoryIcon(item.category)"></i>
+                  </div>
+                </div>
+
+                <!-- 商品名 & 価格 -->
+                <div class="mb-1">
+                  <h3 class="font-bold text-slate-800 text-xs sm:text-sm line-clamp-1 group-hover:text-emerald-700 transition leading-tight">
+                    {{ item.name }}
+                  </h3>
+                  <div class="mt-0.5 flex items-baseline justify-between">
+                    <span class="text-[9px] text-slate-400">税込</span>
+                    <span class="text-xs sm:text-sm font-black text-slate-900">
+                      ¥{{ item.price.toLocaleString() }}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 数量操作ボタン (マイナス/プラス) -->
+                <div v-if="getCartQty(item.id) > 0" class="mt-1 pt-1 border-t border-slate-100 flex items-center justify-between bg-emerald-50/70 rounded-lg p-0.5" @click.stop>
+                  <button 
+                    @click.stop="updateCartQty(item.id, -1)" 
+                    class="w-7 h-7 rounded-md bg-red-500 hover:bg-red-600 active:bg-red-700 text-white font-black text-xs flex items-center justify-center shadow-sm">
+                    <i class="fa-solid fa-minus"></i>
+                  </button>
+                  <span class="font-black text-emerald-950 text-xs px-1">
+                    {{ getCartQty(item.id) }}個
+                  </span>
+                  <button 
+                    @click.stop="addToCart(item)" 
+                    :disabled="getCartQty(item.id) >= item.stock"
+                    class="w-7 h-7 rounded-md bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 disabled:opacity-40 text-slate-950 font-black text-xs flex items-center justify-center shadow-sm">
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                </div>
+                <div v-else class="mt-1 pt-1 border-t border-slate-100 text-center">
+                  <span class="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full inline-block">
+                    + 追加
+                  </span>
+                </div>
+
+                <!-- 在庫切れ -->
+                <div v-if="item.stock <= 0" class="absolute inset-0 bg-slate-900/60 backdrop-blur-[1px] flex items-center justify-center text-white font-black text-xs sm:text-sm tracking-widest uppercase z-10">
+                  売り切れ
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PC用：右側固定 カート・小計パネル -->
+        <div class="hidden md:flex flex-col w-80 lg:w-[400px] bg-white h-full border-l border-slate-200 shadow-xl">
+          
+          <div class="p-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+            <div class="flex items-center space-x-2">
+              <i class="fa-solid fa-cart-shopping text-emerald-600 text-lg"></i>
+              <h2 class="font-bold text-slate-800 text-sm sm:text-base">現在のカート</h2>
+              <span v-if="cartTotalQty > 0" class="bg-emerald-100 text-emerald-800 font-bold text-xs px-2 py-0.5 rounded-full">
+                {{ cartTotalQty }} 点
+              </span>
+            </div>
+            
+            <button 
+              @click="clearCart" 
+              :disabled="cart.length === 0"
+              class="text-xs text-slate-400 hover:text-red-500 disabled:opacity-30 transition flex items-center space-x-1 px-2 py-1 rounded hover:bg-red-50">
+              <i class="fa-solid fa-trash-can"></i>
+              <span>クリア</span>
+            </button>
+          </div>
+
+          <!-- カート明細リスト -->
+          <div class="flex-1 overflow-y-auto p-3 space-y-2">
+            <div v-if="cart.length === 0" class="h-full flex flex-col items-center justify-center text-slate-300 py-6">
+              <i class="fa-solid fa-basket-shopping text-4xl mb-2 stroke-1"></i>
+              <p class="text-xs text-slate-400">商品を選択してください</p>
+            </div>
+
+            <div v-for="cartItem in cart" :key="cartItem.item.id" class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+              <div class="flex-1 pr-2">
+                <div class="flex items-center space-x-1.5">
+                  <span :class="getCategoryBadgeClass(cartItem.item.category)" class="text-[9px] font-bold px-1.5 py-0.2 rounded">
+                    {{ getCategoryLabel(cartItem.item.category) }}
+                  </span>
+                  <h4 class="font-bold text-slate-800 text-xs sm:text-sm line-clamp-1">{{ cartItem.item.name }}</h4>
+                </div>
+                <div class="text-xs text-slate-500 mt-0.5">
+                  ¥{{ cartItem.item.price.toLocaleString() }} × {{ cartItem.qty }}
+                </div>
+              </div>
+
+              <div class="flex items-center space-x-2">
+                <div class="flex items-center border border-slate-200 rounded-lg bg-white shadow-sm">
+                  <button @click="updateCartQty(cartItem.item.id, -1)" class="w-7 h-7 flex items-center justify-center text-slate-600 hover:bg-slate-100 rounded-l-lg active:bg-slate-200">
+                    <i class="fa-solid fa-minus text-[10px]"></i>
+                  </button>
+                  <span class="w-6 text-center font-bold text-xs text-slate-800">{{ cartItem.qty }}</span>
+                  <button @click="updateCartQty(cartItem.item.id, 1)" :disabled="cartItem.qty >= cartItem.item.stock" class="w-7 h-7 flex items-center justify-center text-slate-600 hover:bg-slate-100 rounded-r-lg active:bg-slate-200 disabled:opacity-30">
+                    <i class="fa-solid fa-plus text-[10px]"></i>
+                  </button>
+                </div>
+                <span class="font-black text-slate-900 text-xs sm:text-sm min-w-[50px] text-right">
+                  ¥{{ (cartItem.item.price * cartItem.qty).toLocaleString() }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 小計・割引・お会計固定エリア (PC) -->
+          <div class="p-4 bg-slate-900 text-white shadow-2xl flex-shrink-0 space-y-3 border-t border-slate-800">
+            
+            <!-- 適用されたセット割表示 -->
+            <div v-if="appliedDiscounts.length > 0" class="bg-emerald-500/20 border border-emerald-500/40 rounded-xl p-2.5 space-y-1">
+              <div class="text-[11px] font-bold text-emerald-300 flex items-center space-x-1 mb-1">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span>セット割引が適用されています</span>
+              </div>
+              <div v-for="d in appliedDiscounts" :key="d.ruleId" class="flex items-center justify-between text-xs text-emerald-100 bg-slate-900/40 px-2 py-1 rounded">
+                <span>・{{ d.name }} <span class="font-bold text-emerald-300">×{{ d.times }}</span></span>
+                <span class="font-bold text-emerald-300">- ¥{{ d.totalDiscountAmount.toLocaleString() }}</span>
+              </div>
+            </div>
+
+            <!-- 金額内訳 -->
+            <div class="space-y-1 text-xs text-slate-300">
+              <div class="flex justify-between">
+                <span>小計 ({{ cartTotalQty }}点)</span>
+                <span class="font-semibold text-white">¥{{ cartSubtotal.toLocaleString() }}</span>
+              </div>
+              <div v-if="totalDiscountAmount > 0" class="flex justify-between text-emerald-400 font-bold">
+                <span>セット割引合計</span>
+                <span>- ¥{{ totalDiscountAmount.toLocaleString() }}</span>
+              </div>
+            </div>
+
+            <!-- 最終請求合計金額 & お会計ボタン -->
+            <div class="pt-2 border-t border-slate-800 flex items-center justify-between gap-3">
+              <div>
+                <span class="text-[10px] text-slate-400 block uppercase font-bold">お支払い合計</span>
+                <span class="text-2xl font-black text-emerald-400">
+                  ¥{{ cartFinalTotal.toLocaleString() }}
+                </span>
+              </div>
+              
+              <button 
+                @click="openCheckoutModal" 
+                :disabled="cart.length === 0"
+                class="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-black px-6 py-3 rounded-xl shadow-lg active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center space-x-2 text-base">
+                <span>会計へ</span>
+                <i class="fa-solid fa-arrow-right"></i>
+              </button>
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- スマホ用：ボトム固定 会計バー ＆ カート展開ドロワー -->
+        <div 
+          v-if="showMobileCart" 
+          @click="showMobileCart = false" 
+          class="md:hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-30 transition-opacity">
+        </div>
+
+        <div 
+          :class="[
+            showMobileCart ? 'translate-y-0' : 'translate-y-full md:translate-y-0',
+            'fixed bottom-0 left-0 right-0 z-40 md:hidden bg-white flex flex-col max-h-[80vh] shadow-2xl transition-transform duration-300 ease-in-out border-t border-slate-200 rounded-t-3xl'
+          ]">
+          
+          <div @click="showMobileCart = !showMobileCart" class="p-3 border-b border-slate-100 flex items-center justify-between bg-slate-50 rounded-t-3xl cursor-pointer">
+            <div class="flex items-center space-x-2">
+              <i class="fa-solid fa-cart-shopping text-emerald-600 text-lg"></i>
+              <h2 class="font-bold text-slate-800 text-sm">カート明細</h2>
+              <span v-if="cartTotalQty > 0" class="bg-emerald-100 text-emerald-800 font-bold text-xs px-2 py-0.5 rounded-full">
+                {{ cartTotalQty }} 点
+              </span>
+            </div>
+            
+            <div class="flex items-center space-x-2">
+              <button 
+                @click.stop="clearCart" 
+                :disabled="cart.length === 0"
+                class="text-xs text-slate-400 hover:text-red-500 disabled:opacity-30 transition px-2 py-1 rounded hover:bg-red-50">
+                <i class="fa-solid fa-trash-can"></i>
+                <span>クリア</span>
+              </button>
+              <button class="text-slate-400 hover:text-slate-600 px-2 text-lg">
+                <i class="fa-solid fa-chevron-down"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="flex-1 overflow-y-auto p-3 space-y-2 min-h-[150px]">
+            <div v-if="cart.length === 0" class="h-full flex flex-col items-center justify-center text-slate-300 py-6">
+              <p class="text-xs text-slate-400">カートは空です</p>
+            </div>
+
+            <div v-for="cartItem in cart" :key="cartItem.item.id" class="flex items-center justify-between p-2 bg-slate-50 rounded-xl border border-slate-100">
+              <div class="flex-1 pr-2">
+                <div class="font-bold text-slate-800 text-xs">{{ cartItem.item.name }}</div>
+                <div class="text-[10px] text-slate-500">¥{{ cartItem.item.price }} × {{ cartItem.qty }}</div>
+              </div>
+
+              <div class="flex items-center space-x-2">
+                <div class="flex items-center border border-slate-200 rounded-lg bg-white">
+                  <button @click="updateCartQty(cartItem.item.id, -1)" class="w-6 h-6 flex items-center justify-center text-slate-600">
+                    <i class="fa-solid fa-minus text-[9px]"></i>
+                  </button>
+                  <span class="w-5 text-center font-bold text-xs text-slate-800">{{ cartItem.qty }}</span>
+                  <button @click="updateCartQty(cartItem.item.id, 1)" :disabled="cartItem.qty >= cartItem.item.stock" class="w-6 h-6 flex items-center justify-center text-slate-600 disabled:opacity-30">
+                    <i class="fa-solid fa-plus text-[9px]"></i>
+                  </button>
+                </div>
+                <span class="font-black text-slate-900 text-xs min-w-[45px] text-right">
+                  ¥{{ (cartItem.item.price * cartItem.qty).toLocaleString() }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- スマホ用：常時下部固定 バー -->
+        <div class="md:hidden fixed bottom-0 left-0 right-0 bg-slate-900 text-white p-2 px-3 shadow-2xl z-30 flex items-center justify-between border-t border-slate-800">
+          <button @click="showMobileCart = !showMobileCart" class="flex items-center space-x-2.5 text-left focus:outline-none">
+            <div class="relative bg-emerald-500 text-slate-950 w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shadow shrink-0">
+              <i class="fa-solid fa-cart-shopping"></i>
+              <span v-if="cartTotalQty > 0" class="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border border-slate-900">
+                {{ cartTotalQty }}
+              </span>
+            </div>
+            <div>
+              <div class="text-[10px] text-slate-400 flex items-center space-x-1">
+                <span>明細表示</span>
+                <i :class="showMobileCart ? 'fa-solid fa-chevron-down' : 'fa-solid fa-chevron-up'" class="text-[8px]"></i>
+                <span v-if="totalDiscountAmount > 0" class="text-emerald-400 font-bold ml-0.5">(-¥{{ totalDiscountAmount }})</span>
+              </div>
+              <div class="text-base font-black text-emerald-400 leading-none mt-0.5">
+                ¥{{ cartFinalTotal.toLocaleString() }}
+              </div>
+            </div>
+          </button>
+
+          <button 
+            @click="openCheckoutModal" 
+            :disabled="cart.length === 0"
+            class="bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-black px-4 py-2 rounded-xl shadow-md active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center space-x-1 text-sm">
+            <span>会計へ</span>
+            <i class="fa-solid fa-arrow-right text-xs"></i>
+          </button>
+        </div>
+
+      </div>
+
+      <!-- ================= 2. 在庫 & セット割設定 画面 ================= -->
+      <div v-show="activeTab === 'inventory'" class="h-full overflow-y-auto p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+        
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center space-x-2 mb-1">
+              <button @click="activeTab = 'pos'" class="text-xs font-bold text-amber-600 hover:text-amber-700 bg-amber-100 hover:bg-amber-200 px-2.5 py-1 rounded-lg transition flex items-center space-x-1">
+                <i class="fa-solid fa-arrow-left"></i>
+                <span>レジ画面に戻る</span>
+              </button>
+            </div>
+            <h2 class="text-2xl font-black text-slate-900">在庫 & セット割引設定</h2>
+            <p class="text-slate-500 text-sm">商品の登録、価格設定、在庫調整およびセット割ルールの設定を行えます。</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button 
+              @click="openGasModal" 
+              class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-2 rounded-xl text-xs flex items-center space-x-1.5 shadow transition">
+              <i class="fa-solid fa-lock text-[10px] text-emerald-200"></i>
+              <i class="fa-solid fa-cloud"></i>
+              <span>クラウド共有設定</span>
+            </button>
+            <button 
+              @click="resetAllData" 
+              class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-2 rounded-xl text-xs flex items-center space-x-1">
+              <i class="fa-solid fa-rotate-left"></i>
+              <span>初期状態にリセット</span>
+            </button>
+            <button 
+              @click="openAddDiscountModal" 
+              class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-4 py-2.5 rounded-xl shadow transition flex items-center justify-center space-x-2 text-sm">
+              <i class="fa-solid fa-tags"></i>
+              <span>セット割を登録</span>
+            </button>
+            <button 
+              @click="openAddProductModal" 
+              class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2.5 rounded-xl shadow transition flex items-center justify-center space-x-2 text-sm">
+              <i class="fa-solid fa-plus"></i>
+              <span>新規商品を登録</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 登録済みセット割のカード -->
+        <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-amber-900 text-sm flex items-center space-x-2">
+              <i class="fa-solid fa-wand-magic-sparkles text-amber-500"></i>
+              <span>有効なセット割引ルール ({{ discountRules.length }}件)</span>
+            </h3>
+            <button @click="openAddDiscountModal" class="text-xs font-bold text-amber-700 hover:underline">
+              + 新規登録
+            </button>
+          </div>
+
+          <div v-if="discountRules.length === 0" class="text-xs text-amber-700 py-2">
+            現在セット割引は設定されていません。「セット割を登録」ボタンから条件と値引き額を設定できます。
+          </div>
+
+          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div v-for="d in discountRules" :key="d.id" class="bg-white border border-amber-200 rounded-xl p-3 shadow-sm flex flex-col justify-between">
+              <div>
+                <div class="flex items-start justify-between">
+                  <span class="font-bold text-slate-800 text-sm leading-snug">{{ d.name }}</span>
+                  <button @click="deleteDiscountRule(d.id)" class="text-slate-300 hover:text-red-500 ml-2 p-0.5">
+                    <i class="fa-solid fa-trash-can"></i>
+                  </button>
+                </div>
+                <div class="text-xs text-slate-500 mt-1">
+                  <span v-if="d.conditionType === 'genre'" class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                    ジャンル: {{ d.genres ? d.genres.map(g => getCategoryLabel(g)).join(' + ') : '' }}
+                  </span>
+                  <span v-else class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                    特定商品: {{ d.itemIds ? d.itemIds.map(id => getItemName(id)).join(' + ') : '' }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                <span class="text-[10px] text-slate-400 font-bold uppercase">特典</span>
+                <span class="font-black text-amber-600 text-sm">
+                  <template v-if="d.type === 'amount'">¥{{ d.value }} 引き</template>
+                  <template v-else-if="d.type === 'percent'">{{ d.value }}% 引き</template>
+                  <template v-else>セットで一律 ¥{{ d.value }}</template>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 商品一覧テーブル -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="p-4 border-b border-slate-100 font-bold text-slate-800">商品リスト & 在庫一覧</div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-bold uppercase">
+                  <th class="p-4">商品画像</th>
+                  <th class="p-4">商品名</th>
+                  <th class="p-4">ジャンル</th>
+                  <th class="p-4">販売価格</th>
+                  <th class="p-4 text-center">現在在庫</th>
+                  <th class="p-4 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 text-sm">
+                <tr v-for="item in items" :key="item.id" class="hover:bg-slate-50/80 transition">
+                  <td class="p-3 w-16">
+                    <div class="w-12 h-12 rounded-lg bg-slate-100 overflow-hidden flex items-center justify-center border">
+                      <img v-if="item.image" :src="item.image" class="w-full h-full object-cover" @error="handleImageError($event)">
+                      <i v-else :class="getCategoryIcon(item.category)" class="text-slate-400 text-lg"></i>
+                    </div>
+                  </td>
+                  <td class="p-4 font-bold text-slate-800">
+                    {{ item.name }}
+                  </td>
+                  <td class="p-4">
+                    <span :class="getCategoryBadgeClass(item.category)" class="text-xs font-bold px-2.5 py-1 rounded-full">
+                      {{ getCategoryLabel(item.category) }}
+                    </span>
+                  </td>
+                  <td class="p-4 font-black text-slate-900">
+                    ¥{{ item.price.toLocaleString() }}
+                  </td>
+                  <td class="p-4 text-center">
+                    <input 
+                      type="number" 
+                      v-model.number="item.stock" 
+                      @change="onStockChange"
+                      min="0" 
+                      class="w-20 px-2.5 py-1.5 border border-slate-300 rounded-xl text-center font-bold text-slate-800 focus:ring-2 focus:ring-amber-400 outline-none bg-slate-50 focus:bg-white transition">
+                  </td>
+                  <td class="p-4 text-right space-x-2">
+                    <button @click="editProduct(item)" class="text-slate-400 hover:text-amber-600 p-2 rounded-lg hover:bg-amber-50">
+                      <i class="fa-solid fa-pen"></i>
+                    </button>
+                    <button @click="deleteProduct(item.id)" class="text-slate-400 hover:text-red-600 p-2 rounded-lg hover:bg-red-50">
+                      <i class="fa-solid fa-trash"></i>
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ================= 3. 取引履歴 画面 ================= -->
+      <div v-show="activeTab === 'history'" class="h-full overflow-y-auto p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+        
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h2 class="text-2xl font-black text-slate-900">取引履歴 & 売上分析</h2>
+            <p class="text-slate-500 text-sm">会計ログの閲覧・取消、集計データのCSV出力が可能です。</p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button @click="openGasModal" class="bg-emerald-700 hover:bg-emerald-600 text-white font-bold px-3.5 py-2.5 rounded-xl shadow transition flex items-center space-x-2 text-sm">
+              <i class="fa-solid fa-lock text-xs text-emerald-300"></i>
+              <i class="fa-solid fa-cloud"></i>
+              <span>クラウド共有設定</span>
+            </button>
+            <button @click="exportCSV" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl shadow transition flex items-center space-x-2 text-sm">
+              <i class="fa-solid fa-file-csv"></i>
+              <span>CSVダウンロード</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <div class="text-xs text-slate-400 font-bold">総売上高</div>
+            <div class="text-2xl font-black text-slate-900 mt-1">¥ {{ totalSalesAmount.toLocaleString() }}</div>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <div class="text-xs text-slate-400 font-bold">総取引件数</div>
+            <div class="text-2xl font-black text-slate-900 mt-1">{{ salesHistory.length }} 件</div>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <div class="text-xs text-slate-400 font-bold">平均客単価</div>
+            <div class="text-2xl font-black text-slate-900 mt-1">¥ {{ averageOrderValue.toLocaleString() }}</div>
+          </div>
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <div class="text-xs text-slate-400 font-bold">総割引適用額</div>
+            <div class="text-2xl font-black text-amber-600 mt-1">¥ {{ totalDiscountsGiven.toLocaleString() }}</div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div class="p-4 border-b border-slate-100 font-bold text-slate-800 flex justify-between items-center">
+            <span>会計履歴一覧 (最新順)</span>
+            <span class="text-xs text-slate-400 font-normal">全 {{ salesHistory.length }} 件</span>
+          </div>
+
+          <div v-if="salesHistory.length === 0" class="p-12 text-center text-slate-400">
+            まだ会計履歴がありません
+          </div>
+
+          <div v-else class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-bold uppercase">
+                  <th class="p-4">取引ID / 日時</th>
+                  <th class="p-4">購入商品</th>
+                  <th class="p-4">小計</th>
+                  <th class="p-4">割引</th>
+                  <th class="p-4">合計額</th>
+                  <th class="p-4">お預かり / お釣り</th>
+                  <th class="p-4 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 text-sm">
+                <tr v-for="tx in salesHistory" :key="tx.id" class="hover:bg-slate-50 transition">
+                  <td class="p-4">
+                    <div class="font-mono text-xs font-bold text-slate-500">#{{ tx.id }}</div>
+                    <div class="text-xs text-slate-400 mt-0.5">{{ tx.timestamp }}</div>
+                  </td>
+                  <td class="p-4 max-w-xs">
+                    <div class="space-y-0.5 text-xs">
+                      <div v-for="item in tx.items" :key="item.name" class="flex justify-between">
+                        <span class="text-slate-800 font-medium">{{ item.name }} ×{{ item.qty }}</span>
+                        <span class="text-slate-500">¥{{ (item.price * item.qty).toLocaleString() }}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td class="p-4 font-semibold text-slate-700">¥{{ tx.subtotal.toLocaleString() }}</td>
+                  <td class="p-4 font-bold text-amber-600">
+                    <span v-if="tx.discount > 0">- ¥{{ tx.discount.toLocaleString() }}</span>
+                    <span v-else class="text-slate-300">-</span>
+                  </td>
+                  <td class="p-4 font-black text-slate-900 text-base">¥{{ tx.total.toLocaleString() }}</td>
+                  <td class="p-4 text-xs text-slate-600">
+                    <div>預: ¥{{ tx.paid.toLocaleString() }}</div>
+                    <div>釣: ¥{{ tx.change.toLocaleString() }}</div>
+                  </td>
+                  <td class="p-4 text-right">
+                    <button @click="openCancelModal(tx)" class="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1.5 rounded-lg font-bold border border-red-200 transition inline-flex items-center space-x-1">
+                      <i class="fa-solid fa-ban"></i>
+                      <span>取引取消</span>
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+    </main>
+
+    <!-- ================= モーダル1：会計・お釣り計算 ================= -->
+    <div v-if="showCheckoutModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+      <div class="bg-white rounded-2xl sm:rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[98vh] sm:max-h-[92vh]">
+        
+        <!-- ヘッダー -->
+        <div class="bg-slate-900 text-white px-4 py-2.5 flex items-center justify-between shrink-0 border-b border-slate-800">
+          <h3 class="text-sm sm:text-base font-bold flex items-center space-x-2">
+            <i class="fa-solid fa-calculator text-emerald-400"></i>
+            <span>お会計・お釣り計算</span>
+          </h3>
+          <button @click="showCheckoutModal = false" class="text-slate-400 hover:text-white text-lg p-1">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="p-3 sm:p-5 flex-1 flex flex-col justify-between overflow-y-auto space-y-2.5">
+          
+          <!-- 明細 ＆ 計算結果カード -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 shrink-0">
+            
+            <!-- お買い上げ明細 -->
+            <div class="bg-slate-50 rounded-xl p-2.5 border border-slate-200 flex flex-col justify-between max-h-28 sm:max-h-36">
+              <div class="text-[11px] font-bold text-slate-500 flex items-center justify-between border-b border-slate-200 pb-1 mb-1 shrink-0">
+                <span>明細 ({{ cartTotalQty }}点)</span>
+                <span>小計: ¥{{ cartSubtotal.toLocaleString() }}</span>
+              </div>
+
+              <div class="overflow-y-auto space-y-1 pr-1 flex-1 text-xs">
+                <div v-for="c in cart" :key="c.item.id" class="flex items-center justify-between text-[11px]">
+                  <span class="truncate mr-1 font-semibold text-slate-800">{{ c.item.name }} ×{{ c.qty }}</span>
+                  <span class="font-bold text-slate-900 shrink-0">¥{{ (c.item.price * c.qty).toLocaleString() }}</span>
+                </div>
+                <!-- セット割表示 -->
+                <div v-if="appliedDiscounts.length > 0" class="pt-1 border-t border-emerald-200 text-[10px] text-emerald-700 font-bold space-y-0.5">
+                  <div v-for="d in appliedDiscounts" :key="d.ruleId" class="flex justify-between">
+                    <span>{{ d.name }} ×{{ d.times }}</span>
+                    <span>-¥{{ d.totalDiscountAmount.toLocaleString() }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 請求金額・お預かり・お釣りカード -->
+            <div class="bg-slate-900 text-white p-2.5 rounded-xl flex flex-col justify-center space-y-1 shadow-inner">
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-slate-300 font-bold">お支払い合計</span>
+                <span class="text-base sm:text-lg font-black text-emerald-400">¥ {{ cartFinalTotal.toLocaleString() }}</span>
+              </div>
+              
+              <div class="flex justify-between items-center text-xs border-t border-slate-800 pt-1">
+                <span class="font-bold text-slate-300">お預かり金額</span>
+                <span class="text-base sm:text-lg font-black text-sky-400">¥ {{ paidAmount.toLocaleString() }}</span>
+              </div>
+
+              <div class="flex justify-between items-center text-xs border-t border-slate-800 pt-1">
+                <span class="font-bold text-slate-300">お釣り</span>
+                <span :class="changeAmount < 0 ? 'text-red-400' : 'text-emerald-400'" class="text-base sm:text-lg font-black">
+                  <template v-if="changeAmount >= 0">¥ {{ changeAmount.toLocaleString() }}</template>
+                  <template v-else>不足 ¥ {{ Math.abs(changeAmount).toLocaleString() }}</template>
+                </span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- クイック金額入力ボタン -->
+          <div class="grid grid-cols-4 gap-1.5 shrink-0">
+            <button @click="setPaidAmount(cartFinalTotal)" class="py-1.5 bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-800 font-bold rounded-lg text-xs transition">
+              ぴったり
+            </button>
+            <button @click="addPaidAmount(1000)" class="py-1.5 bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-emerald-900 font-bold rounded-lg text-xs transition">
+              +1,000円
+            </button>
+            <button @click="addPaidAmount(5000)" class="py-1.5 bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-emerald-900 font-bold rounded-lg text-xs transition">
+              +5,000円
+            </button>
+            <button @click="addPaidAmount(10000)" class="py-1.5 bg-emerald-100 hover:bg-emerald-200 active:bg-emerald-300 text-emerald-900 font-bold rounded-lg text-xs transition">
+              +10,000円
+            </button>
+          </div>
+
+          <!-- テンキー -->
+          <div class="grid grid-cols-3 gap-1.5 flex-1">
+            <button v-for="n in [7,8,9,4,5,6,1,2,3]" :key="n" @click="appendNumpad(n)" class="py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-black text-lg rounded-xl transition flex items-center justify-center">
+              {{ n }}
+            </button>
+            <button @click="appendNumpad('00')" class="py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-black text-base rounded-xl transition flex items-center justify-center">
+              00
+            </button>
+            <button @click="appendNumpad(0)" class="py-2 sm:py-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-black text-lg rounded-xl transition flex items-center justify-center">
+              0
+            </button>
+            <button @click="clearPaidAmount" class="py-2 sm:py-2.5 bg-red-100 hover:bg-red-200 active:bg-red-300 text-red-600 font-bold text-xs sm:text-sm rounded-xl transition flex items-center justify-center">
+              クリア
+            </button>
+          </div>
+
+          <!-- 会計完了ボタン -->
+          <button 
+            @click="completeCheckout" 
+            :disabled="changeAmount < 0 || paidAmount === 0"
+            class="w-full py-2.5 sm:py-3 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-base rounded-xl shadow-md disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center justify-center space-x-2 shrink-0">
+            <i class="fa-solid fa-check-circle text-lg"></i>
+            <span>会計完了・登録</span>
+          </button>
+
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ================= モーダル2：商品登録・編集 ================= -->
+    <div v-if="showProductModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4">
+        <h3 class="text-xl font-black text-slate-900">
+          {{ editingProduct ? '商品情報の編集' : '新規商品の登録' }}
+        </h3>
+
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs font-bold text-slate-500 block mb-1">商品名</label>
+            <input v-model="productForm.name" type="text" placeholder="例: 秘伝の焼きそば" class="w-full px-3 py-2 border rounded-xl font-bold focus:ring-2 focus:ring-amber-400 outline-none">
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs font-bold text-slate-500 block mb-1">価格 (円)</label>
+              <input v-model.number="productForm.price" type="number" min="0" class="w-full px-3 py-2 border rounded-xl font-bold focus:ring-2 focus:ring-amber-400 outline-none">
+            </div>
+            <div>
+              <label class="text-xs font-bold text-slate-500 block mb-1">{{ editingProduct ? '現在在庫数' : '初期在庫数' }}</label>
+              <input v-model.number="productForm.stock" type="number" min="0" class="w-full px-3 py-2 border rounded-xl font-bold focus:ring-2 focus:ring-amber-400 outline-none">
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs font-bold text-slate-500 block mb-1">ジャンル</label>
+            <select v-model="productForm.category" class="w-full px-3 py-2 border rounded-xl font-bold bg-white focus:ring-2 focus:ring-amber-400 outline-none">
+              <option value="food">フード</option>
+              <option value="sweets">スイーツ</option>
+              <option value="drink">ドリンク</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="text-xs font-bold text-slate-500 block mb-1">商品画像URL (任意)</label>
+            <input v-model="productForm.image" type="text" placeholder="https://..." class="w-full px-3 py-2 border rounded-xl text-xs focus:ring-2 focus:ring-amber-400 outline-none">
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2 pt-2">
+          <button @click="showProductModal = false" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">
+            キャンセル
+          </button>
+          <button @click="saveProduct" class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-sm shadow">
+            保存する
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= モーダル3：管理者認証 ================= -->
+    <div v-if="showAuthModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 space-y-4">
+        <div class="flex items-center space-x-3 text-slate-900">
+          <div class="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-lg shrink-0">
+            <i class="fa-solid fa-shield-halved"></i>
+          </div>
+          <div>
+            <h3 class="text-lg font-bold">管理者認証</h3>
+            <p class="text-xs text-slate-500">パスワード（4桁）を入力してください</p>
+          </div>
+        </div>
+
+        <div>
+          <input 
+            v-model="authPasswordInput" 
+            type="password" 
+            maxlength="4" 
+            placeholder="****" 
+            @keyup.enter="verifyAuthPassword"
+            class="w-full px-4 py-3 border-2 rounded-2xl text-center text-2xl tracking-widest font-mono font-bold text-slate-800 focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none">
+          <p v-if="authErrorMessage" class="text-xs text-red-500 font-bold mt-1 text-center">{{ authErrorMessage }}</p>
+        </div>
+
+        <div class="flex items-center space-x-2 pt-2">
+          <button @click="closeAuthModal" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">
+            キャンセル
+          </button>
+          <button @click="verifyAuthPassword" class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-sm shadow">
+            認証する
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= モーダル4：管理者設定メニュー ================= -->
+    <div v-if="showSettingsModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 space-y-5">
+        <div class="flex items-center justify-between border-b pb-3">
+          <h3 class="text-lg font-bold text-slate-900 flex items-center space-x-2">
+            <i class="fa-solid fa-gear text-amber-500"></i>
+            <span>管理者設定</span>
+          </h3>
+          <button @click="showSettingsModal = false" class="text-slate-400 hover:text-slate-600">
+            <i class="fa-solid fa-xmark text-lg"></i>
+          </button>
+        </div>
+
+        <div class="space-y-3">
+          <!-- 営業ステータス切り替え -->
+          <div class="flex items-center justify-between p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+            <div>
+              <div class="font-bold text-slate-800 text-sm">営業ステータス</div>
+              <div class="text-xs text-slate-500">{{ isOperating ? '現在「営業中」です' : '現在「準備中」です' }}</div>
+            </div>
+
+            <button 
+              @click="isOperating = !isOperating" 
+              :class="isOperating ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'"
+              class="px-4 py-2 rounded-xl font-bold text-xs transition shadow flex items-center space-x-1.5">
+              <i :class="isOperating ? 'fa-solid fa-store' : 'fa-solid fa-store-slash'"></i>
+              <span>{{ isOperating ? '営業中' : '準備中' }}</span>
+            </button>
+          </div>
+
+          <!-- 在庫・セット割管理画面への進むボタン -->
+          <button 
+            @click="goToInventoryFromSettings" 
+            class="w-full p-3.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-2xl flex items-center justify-between text-left transition group">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold">
+                <i class="fa-solid fa-boxes-stacked"></i>
+              </div>
+              <div>
+                <div class="font-bold text-slate-900 text-sm">在庫 & セット割管理</div>
+                <div class="text-[11px] text-slate-500">商品登録・在庫調整・割引設定</div>
+              </div>
+            </div>
+            <i class="fa-solid fa-chevron-right text-slate-400 group-hover:text-slate-700 transition"></i>
+          </button>
+
+          <!-- スプレッドシート連携ボタン -->
+          <button 
+            @click="showSettingsModal = false; openGasModal()" 
+            class="w-full p-3.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-2xl flex items-center justify-between text-left transition group">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold">
+                <i class="fa-solid fa-cloud"></i>
+              </div>
+              <div>
+                <div class="font-bold text-slate-900 text-sm flex items-center space-x-1.5">
+                  <span>クラウド共有設定</span>
+                  <i class="fa-solid fa-lock text-xs text-emerald-600"></i>
+                </div>
+                <div class="text-[11px] text-slate-500">複数デバイス同期・Web App URL設定</div>
+              </div>
+            </div>
+            <i class="fa-solid fa-chevron-right text-slate-400 group-hover:text-slate-700 transition"></i>
+          </button>
+
+          <div class="text-xs text-slate-500 leading-relaxed bg-slate-100 p-3 rounded-xl border border-slate-200">
+            <i class="fa-solid fa-circle-info text-slate-500 mr-1"></i>
+            「準備中」に切り替えるとレジ操作が一時ロックされます。
+          </div>
+        </div>
+
+        <div class="pt-2 border-t flex justify-end">
+          <button @click="showSettingsModal = false" class="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-sm">
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= モーダル5：セット割追加 ================= -->
+    <div v-if="showDiscountModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <h3 class="text-xl font-black text-slate-900">セット割引ルールの追加</h3>
+
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs font-bold text-slate-500 block mb-1">割引の名称</label>
+            <input v-model="discountForm.name" type="text" placeholder="例: スイーツ＋ドリンク一律500円" class="w-full px-3 py-2 border rounded-xl font-bold focus:ring-2 focus:ring-amber-400 outline-none">
+          </div>
+
+          <div>
+            <label class="text-xs font-bold text-slate-500 block mb-1">条件タイプ</label>
+            <select v-model="discountForm.conditionType" class="w-full px-3 py-2 border rounded-xl font-bold bg-white focus:ring-2 focus:ring-amber-400 outline-none">
+              <option value="genre">ジャンルの組み合わせ</option>
+              <option value="item">特定商品の組み合わせ</option>
+            </select>
+          </div>
+
+          <!-- ジャンル選択 -->
+          <div v-if="discountForm.conditionType === 'genre'" class="p-3 bg-slate-50 rounded-xl space-y-2">
+            <label class="text-xs font-bold text-slate-600 block">対象ジャンル (2つ以上選択)</label>
+            <div class="flex flex-wrap gap-2">
+              <label v-for="g in ['food', 'sweets', 'drink']" :key="g" class="inline-flex items-center space-x-1 text-xs font-bold bg-white px-2.5 py-1.5 rounded-lg border cursor-pointer">
+                <input type="checkbox" :value="g" v-model="discountForm.genres" class="rounded text-amber-500 focus:ring-amber-400">
+                <span>{{ getCategoryLabel(g) }}</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 特定商品選択 -->
+          <div v-else class="p-3 bg-slate-50 rounded-xl space-y-2 max-h-40 overflow-y-auto">
+            <label class="text-xs font-bold text-slate-600 block">対象商品 (2つ以上選択)</label>
+            <div class="space-y-1">
+              <label v-for="item in items" :key="item.id" class="flex items-center space-x-2 text-xs font-bold bg-white p-2 rounded-lg border cursor-pointer">
+                <input type="checkbox" :value="item.id" v-model="discountForm.itemIds" class="rounded text-amber-500 focus:ring-amber-400">
+                <span>{{ item.name }} (¥{{ item.price }})</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 割引方法選択 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs font-bold text-slate-500 block mb-1">割引方法</label>
+              <select v-model="discountForm.type" class="w-full px-3 py-2 border rounded-xl font-bold bg-white focus:ring-2 focus:ring-amber-400 outline-none">
+                <option value="amount">○○円引き</option>
+                <option value="percent">○○%引き (〇割引き)</option>
+                <option value="fixed">一律○○円にする</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs font-bold text-slate-500 block mb-1">値</label>
+              <input v-model.number="discountForm.value" type="number" min="1" placeholder="500" class="w-full px-3 py-2 border rounded-xl font-bold focus:ring-2 focus:ring-amber-400 outline-none">
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2 pt-2">
+          <button @click="showDiscountModal = false" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">
+            キャンセル
+          </button>
+          <button 
+            @click="saveDiscountRule" 
+            :disabled="!isDiscountFormValid"
+            class="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-sm shadow disabled:opacity-40">
+            登録する
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= モーダル6：取引取消 (担当者入力) ================= -->
+    <div v-if="showCancelModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 space-y-4">
+        <div class="flex items-center space-x-3 text-red-600">
+          <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-lg shrink-0">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-slate-900">取引の取り消し</h3>
+            <p class="text-xs text-slate-500">ID: #{{ cancelingTx ? cancelingTx.id : '' }}</p>
+          </div>
+        </div>
+
+        <div class="bg-red-50 p-3 rounded-xl border border-red-100 text-xs text-red-800 space-y-1">
+          <p class="font-bold">この取引を取消し、商品を在庫へ返却します。</p>
+          <p class="text-[11px] text-red-600">取り消しを行う操作担当者の名前を入力してください。</p>
+        </div>
+
+        <div>
+          <label class="text-xs font-bold text-slate-600 block mb-1">操作担当者名 <span class="text-red-500">*</span></label>
+          <input 
+            v-model="cancelOperatorName" 
+            type="text" 
+            placeholder="例: 山田太郎" 
+            class="w-full px-3 py-2.5 border-2 rounded-xl font-bold focus:ring-2 focus:ring-red-400 outline-none">
+        </div>
+
+        <div class="flex items-center space-x-2 pt-2">
+          <button @click="showCancelModal = false" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">
+            キャンセル
+          </button>
+          <button 
+            @click="executeTransactionCancel" 
+            :disabled="!cancelOperatorName.trim()"
+            class="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-sm shadow disabled:opacity-40">
+            取消を実行
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= カスタム確認モーダル ================= -->
+    <div v-if="confirmDialog.show" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 text-center">
+        <div class="w-12 h-12 rounded-full bg-red-100 text-red-500 flex items-center justify-center mx-auto text-xl">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+        </div>
+        <div>
+          <h3 class="text-lg font-bold text-slate-900">{{ confirmDialog.title }}</h3>
+          <p class="text-xs text-slate-500 mt-1">{{ confirmDialog.message }}</p>
+        </div>
+        <div class="flex space-x-2 pt-2">
+          <button @click="confirmDialog.show = false" class="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">
+            キャンセル
+          </button>
+          <button @click="executeConfirm" class="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-sm shadow">
+            実行する
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= モーダル7：全デバイス同期設定 (Google Apps Script) ================= -->
+    <div v-if="showGasModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between border-b pb-3">
+          <div class="flex items-center space-x-2.5">
+            <div class="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center text-xl shrink-0">
+              <i class="fa-solid fa-cloud"></i>
+            </div>
+            <div>
+              <div class="flex items-center space-x-1.5">
+                <h3 class="text-base sm:text-lg font-bold text-slate-900">デバイス間データ同期 (GAS)</h3>
+                <span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center space-x-1">
+                  <i class="fa-solid fa-lock text-[9px]"></i>
+                  <span>管理者専用</span>
+                </span>
+              </div>
+              <p class="text-xs text-slate-500">Googleスプレッドシートを使って複数端末でリアルタイム共有</p>
+            </div>
+          </div>
+          <button @click="showGasModal = false" class="text-slate-400 hover:text-slate-600 p-1 text-lg">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <!-- ステータス表示 -->
+        <div v-if="gasSyncStatus.message" :class="{
+          'bg-emerald-50 text-emerald-800 border-emerald-200': gasSyncStatus.type === 'success',
+          'bg-red-50 text-red-800 border-red-200': gasSyncStatus.type === 'error',
+          'bg-blue-50 text-blue-800 border-blue-200': gasSyncStatus.type === 'info'
+        }" class="p-3 rounded-xl border text-xs font-bold flex items-center justify-between">
+          <span>{{ gasSyncStatus.message }}</span>
+          <i v-if="gasSyncStatus.loading" class="fa-solid fa-spinner animate-spin text-sm"></i>
+        </div>
+
+        <!-- URL設定 & 自動同期 -->
+        <div class="space-y-3">
+          <div>
+            <label class="text-xs font-bold text-slate-700 block mb-1">
+              Google Apps Script (GAS) Web アプリ URL
+              <span class="text-emerald-600 font-normal ml-1">（設定済み）</span>
+            </label>
+            <input 
+              v-model="gasUrl" 
+              type="text" 
+              placeholder="https://script.google.com/macros/s/ここにURLを貼り付け/exec" 
+              class="w-full px-3 py-2.5 border-2 border-emerald-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-emerald-400 focus:border-emerald-500 outline-none bg-emerald-50/30"
+              @change="fetchFromGoogleSheets(false)">
+            <p class="text-[11px] text-slate-500 mt-1">※ URLを変更すると自動的に保存され、クラウドデータと同期が開始されます。</p>
+          </div>
+
+          <!-- 自動送信トグル -->
+          <div class="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-200">
+            <div>
+              <div class="font-bold text-slate-800 text-xs sm:text-sm">操作時にクラウドへ自動書き込み</div>
+              <div class="text-[11px] text-slate-500">会計完了・在庫更新のたびにスプレッドシートに保存</div>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="autoSyncGas" class="sr-only peer">
+              <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+            </label>
+          </div>
+        </div>
+
+        <!-- アクションボタン -->
+        <div class="grid grid-cols-2 gap-2">
+          <button 
+            @click="fetchFromGoogleSheets" 
+            :disabled="!gasUrl || gasSyncStatus.loading"
+            class="py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-bold rounded-xl text-xs shadow disabled:opacity-40 transition flex items-center justify-center space-x-1.5">
+            <i class="fa-solid fa-cloud-arrow-down"></i>
+            <span>クラウドから読み込み</span>
+          </button>
+          <button 
+            @click="syncToGoogleSheets(false)" 
+            :disabled="!gasUrl || gasSyncStatus.loading"
+            class="py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold rounded-xl text-xs shadow disabled:opacity-40 transition flex items-center justify-center space-x-1.5">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+            <span>クラウドへ上書き保存</span>
+          </button>
+        </div>
+
+        <!-- セットアップガイド (折りたたみ) -->
+        <div class="border-t border-slate-200 pt-3">
+          <button 
+            @click="showGasCodeGuide = !showGasCodeGuide" 
+            class="w-full text-left text-xs font-bold text-slate-600 hover:text-emerald-600 flex items-center justify-between py-1">
+            <span class="flex items-center space-x-1.5">
+              <i class="fa-solid fa-circle-question text-emerald-500"></i>
+              <span>Googleスプレッドシートの設定方法 (最新GASコード)</span>
+            </span>
+            <i :class="showGasCodeGuide ? 'fa-solid fa-chevron-up' : 'fa-solid fa-chevron-down'"></i>
+          </button>
+
+          <div v-if="showGasCodeGuide" class="mt-2 text-xs space-y-2 text-slate-600 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+            <ol class="list-decimal list-inside space-y-1 font-medium text-[11px] leading-relaxed">
+              <li>Googleスプレッドシートを新規作成します。</li>
+              <li>「拡張機能」&gt;「Apps Script」を開きます。</li>
+              <li>下のコードを既存のコードと全て差し替えて保存します。</li>
+              <li>「デプロイ」&gt;「新しいデプロイ」を選択。</li>
+              <li>種類「ウェブアプリ」、アクセスできるユーザーを「全員」にしてデプロイ。</li>
+              <li>発行された「ウェブアプリ URL」を上に貼り付けてください。</li>
+            </ol>
+
+            <div class="relative mt-2">
+              <pre class="bg-slate-900 text-emerald-300 p-2.5 rounded-xl text-[10px] overflow-x-auto font-mono max-h-48 leading-snug">{{ gasCodeScript }}</pre>
+              <button 
+                @click="copyGasScript" 
+                class="absolute top-2 right-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-2 py-1 rounded-md text-[10px] shadow transition">
+                <i class="fa-solid fa-copy mr-1"></i>コピー
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-2 border-t">
+          <button @click="showGasModal = false" class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const { createApp, ref, computed, onMounted, watch } = Vue;
+
+    const DEFAULT_ITEMS = [
+      { id: '1', name: '能登のいも', price: 250, category: 'sweets', stock: 56, image: 'https://notocho.jp/web/wp-content/uploads/2020/02/DSC_0360-1024x623.jpg' },
+      { id: '2', name: 'ひっぱり餅', price: 300, category: 'sweets', stock: 20, image: 'https://iijikanazawa.com/news/newsfile/-20180419024743.jpg' },
+      { id: '3', name: '房総えびせんべい', price: 125, category: 'sweets', stock: 60, image: 'https://tshop.r10s.jp/kurobera/cabinet/item_img/img-bosoebisenbei_1.jpg?fitin=720%3A720' },
+      { id: '4', name: '落花生パイ', price: 300, category: 'sweets', stock: 20, image: 'https://item-shopping.c.yimg.jp/i/n/chiba-orandaya_z0001' },
+      { id: '5', name: '肥後太鼓', price: 300, category: 'sweets', stock: 20, image: 'https://antagatadokosa.com/upload/save_image/10141447_6348f7df962ec.png' },
+      { id: '6', name: '黒糖ドーナッツ棒', price: 150, category: 'sweets', stock: 40, image: 'https://img21.shop-pro.jp/PA01491/043/product/171322164.png?cmsp_timestamp=20221106145334' },
+      { id: '7', name: '能登のはとむぎ茶', price: 300, category: 'drink', stock: 24, image: 'https://www.hakui.is-ja.jp/_wp/wp-content/uploads/2023/03/6947992e5b6495678bef0e1fae88c9c1-scaled.jpg' },
+      { id: '8', name: '熊本みかんジュース', price: 300, category: 'drink', stock: 24, image: 'https://www.felissimo.co.jp/dw/image/v2/BGGR_PRD/on/demandware.static/-/Sites-222/default/dw956b1c36/pic/442163-productcuts-01-99999999-M.jpg' },
+      { id: '9', name: '熊本すいかサイダー', price: 300, category: 'drink', stock: 24, image: 'https://www.ozmall.co.jp/Content/upload/images/30d8b534069e4d51b14c034540f1401b.jpg' }
+    ];
+
+    const DEFAULT_DISCOUNTS = [
+      {
+        id: 'd1',
+        name: 'スイーツ＆ドリンク割（一律500円）',
+        conditionType: 'genre',
+        genres: ['sweets', 'drink'],
+        itemIds: [],
+        type: 'fixed',
+        value: 500
+      }
+    ];
+
+    createApp({
+      setup() {
+        const activeTab = ref('pos');
+        const showMobileCart = ref(false);
+
+        // 営業状態 & 管理者認証
+        const isOperating = ref(true);
+        const isAdminAuthenticated = ref(false);
+        const showAuthModal = ref(false);
+        const showSettingsModal = ref(false);
+        const authPasswordInput = ref('');
+        const authErrorMessage = ref('');
+        const pendingAction = ref(null);
+
+        const showCancelModal = ref(false);
+        const cancelingTx = ref(null);
+        const cancelOperatorName = ref('');
+
+        const confirmDialog = ref({ show: false, title: '', message: '', action: null });
+        const requestConfirm = (title, message, action) => {
+          confirmDialog.value = { show: true, title, message, action };
+        };
+        const executeConfirm = () => {
+          if (confirmDialog.value.action) confirmDialog.value.action();
+          confirmDialog.value.show = false;
+        };
+
+        const items = ref([...DEFAULT_ITEMS]);
+        const cart = ref([]);
+        const discountRules = ref([...DEFAULT_DISCOUNTS]);
+        const salesHistory = ref([]);
+
+        const showCheckoutModal = ref(false);
+        const showProductModal = ref(false);
+        const showDiscountModal = ref(false);
+
+        const paidAmount = ref(0);
+
+        const editingProduct = ref(null);
+        const productForm = ref({ name: '', price: 300, category: 'sweets', stock: 50, image: '' });
+        const discountForm = ref({ name: '', conditionType: 'genre', genres: ['sweets', 'drink'], itemIds: [], type: 'fixed', value: 500 });
+
+        // Googleスプレッドシート連携状態 (指定URLをデフォルト設定)
+        const showGasModal = ref(false);
+        const gasUrl = ref('https://script.google.com/macros/s/AKfycbz7LY6nj6t3n1IdvRpWrRYzIFGqGwryrIckpNAjbJE3jUJF_N8gip8nn6P13xbwh7xy/exec');
+        const autoSyncGas = ref(true);
+        const showGasCodeGuide = ref(false);
+        const gasSyncStatus = ref({ loading: false, message: '', type: 'info' });
+        const isSyncing = ref(false);
+
+        // 双方向同期に対応したGASスクリプト
+        const gasCodeScript = `function doGet(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var result = {};
+  
+  // 在庫取得
+  var invSheet = ss.getSheetByName('現在在庫');
+  if (invSheet) {
+    var values = invSheet.getDataRange().getValues();
+    if (values.length > 1) {
+      result.inventory = values.slice(1).map(function(row) {
+        return {
+          id: String(row[0]),
+          name: row[1],
+          category: row[2],
+          price: Number(row[3]),
+          stock: Number(row[4]),
+          image: row[5] || ''
+        };
+      });
+    }
+  }
+
+  // 取引履歴取得
+  var txSheet = ss.getSheetByName('取引履歴');
+  if (txSheet) {
+    var values = txSheet.getDataRange().getValues();
+    if (values.length > 1) {
+      result.history = values.slice(1).map(function(row) {
+        return {
+          id: String(row[0]),
+          timestamp: row[1],
+          items: JSON.parse(row[2] || '[]'),
+          subtotal: Number(row[3]),
+          discount: Number(row[4]),
+          total: Number(row[5]),
+          paid: Number(row[6]),
+          change: Number(row[7])
+        };
+      });
+    }
+  }
+
+  // 割引ルール取得
+  var discSheet = ss.getSheetByName('割引設定');
+  if (discSheet) {
+    var values = discSheet.getDataRange().getValues();
+    if (values.length > 1) {
+      result.discounts = values.slice(1).map(function(row) {
+        return {
+          id: String(row[0]),
+          name: row[1],
+          conditionType: row[2],
+          genres: row[3] ? row[3].split(',') : [],
+          itemIds: row[4] ? row[4].split(',') : [],
+          type: row[5],
+          value: Number(row[6])
+        };
+      });
+    }
+  }
+
+  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    if (data.inventory) {
+      var invSheet = ss.getSheetByName('現在在庫') || ss.insertSheet('現在在庫');
+      invSheet.clear();
+      invSheet.appendRow(['商品ID', '商品名', 'ジャンル', '価格(円)', '現在在庫数', '画像URL']);
+      data.inventory.forEach(function(item) {
+        invSheet.appendRow([item.id, item.name, item.category, item.price, item.stock, item.image || '']);
+      });
+    }
+
+    if (data.history) {
+      var txSheet = ss.getSheetByName('取引履歴') || ss.insertSheet('取引履歴');
+      txSheet.clear();
+      txSheet.appendRow(['取引ID', '日時', '購入商品JSON', '小計', '割引額', '合計額', 'お預かり', 'お釣り']);
+      data.history.forEach(function(tx) {
+        txSheet.appendRow([tx.id, tx.timestamp, JSON.stringify(tx.items), tx.subtotal, tx.discount, tx.total, tx.paid, tx.change]);
+      });
+    }
+
+    if (data.discounts) {
+      var discSheet = ss.getSheetByName('割引設定') || ss.insertSheet('割引設定');
+      discSheet.clear();
+      discSheet.appendRow(['ID', '名称', '条件タイプ', '対象ジャンル', '対象商品ID', '割引種別', '値']);
+      data.discounts.forEach(function(d) {
+        discSheet.appendRow([d.id, d.name, d.conditionType, (d.genres||[]).join(','), (d.itemIds||[]).join(','), d.type, d.value]);
+      });
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({ status: 'success' })).setMimeType(ContentService.MimeType.JSON);
+  } catch(error) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: error.toString() })).setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+
+        onMounted(async () => {
+          try {
+            const savedItems = localStorage.getItem('pos_items');
+            if (savedItems) items.value = JSON.parse(savedItems);
+
+            const savedDiscounts = localStorage.getItem('pos_discounts');
+            if (savedDiscounts) discountRules.value = JSON.parse(savedDiscounts);
+
+            const savedHistory = localStorage.getItem('pos_history');
+            if (savedHistory) salesHistory.value = JSON.parse(savedHistory);
+
+            const savedGasUrl = localStorage.getItem('pos_gas_url');
+            if (savedGasUrl) gasUrl.value = savedGasUrl;
+
+            const savedAutoSync = localStorage.getItem('pos_auto_sync_gas');
+            if (savedAutoSync !== null) autoSyncGas.value = JSON.parse(savedAutoSync);
+
+            // クラウドURLが設定されている場合、起動時に最新データをクラウドから読み込む
+            if (gasUrl.value) {
+              await fetchFromGoogleSheets(true);
+            }
+          } catch(e) {
+            console.error('LocalStorage parse error:', e);
+          }
+        });
+
+        watch(items, (newVal) => localStorage.setItem('pos_items', JSON.stringify(newVal)), { deep: true });
+        watch(discountRules, (newVal) => localStorage.setItem('pos_discounts', JSON.stringify(newVal)), { deep: true });
+        watch(salesHistory, (newVal) => localStorage.setItem('pos_history', JSON.stringify(newVal)), { deep: true });
+        watch(gasUrl, (newVal) => localStorage.setItem('pos_gas_url', newVal));
+        watch(autoSyncGas, (newVal) => localStorage.setItem('pos_auto_sync_gas', JSON.stringify(newVal)));
+
+        // クラウドからデータ読み込み (doGet)
+        const fetchFromGoogleSheets = async (silent = false) => {
+          if (!gasUrl.value) return;
+
+          isSyncing.value = true;
+          if (!silent) {
+            gasSyncStatus.value = { loading: true, message: 'クラウドから最新データを同期中...', type: 'info' };
+          }
+
+          try {
+            const response = await fetch(gasUrl.value);
+            if (!response.ok) throw new Error('通信エラーが発生しました');
+            const data = await response.json();
+
+            if (data.inventory && Array.isArray(data.inventory) && data.inventory.length > 0) {
+              items.value = data.inventory;
+            }
+            if (data.history && Array.isArray(data.history)) {
+              salesHistory.value = data.history;
+            }
+            if (data.discounts && Array.isArray(data.discounts) && data.discounts.length > 0) {
+              discountRules.value = data.discounts;
+            }
+
+            const nowTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            gasSyncStatus.value = { loading: false, message: `クラウドから同期完了 (${nowTime})`, type: 'success' };
+          } catch (e) {
+            console.error('GAS Fetch Error:', e);
+            if (!silent) {
+              gasSyncStatus.value = { loading: false, message: '読み込みに失敗しました: ' + e.message, type: 'error' };
+            }
+          } finally {
+            isSyncing.value = false;
+          }
+        };
+
+        // クラウドへ送信 (doPost)
+        const syncToGoogleSheets = async (silent = false) => {
+          if (!gasUrl.value) {
+            if (!silent) {
+              gasSyncStatus.value = { loading: false, message: 'Google Apps Script URLを入力してください', type: 'error' };
+            }
+            return;
+          }
+
+          isSyncing.value = true;
+          if (!silent) {
+            gasSyncStatus.value = { loading: true, message: 'クラウドへ最新データを送信中...', type: 'info' };
+          }
+
+          const payload = {
+            inventory: items.value,
+            history: salesHistory.value,
+            discounts: discountRules.value
+          };
+
+          try {
+            await fetch(gasUrl.value, {
+              method: 'POST',
+              mode: 'no-cors',
+              headers: { 'Content-Type': 'text/plain' },
+              body: JSON.stringify(payload)
+            });
+            const nowTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            gasSyncStatus.value = { loading: false, message: `クラウドへ送信完了 (${nowTime})`, type: 'success' };
+          } catch (e) {
+            console.error('GAS Sync Error:', e);
+            if (!silent) {
+              gasSyncStatus.value = { loading: false, message: '送信に失敗しました: ' + e.message, type: 'error' };
+            }
+          } finally {
+            isSyncing.value = false;
+          }
+        };
+
+        const openGasModal = () => {
+          requireAuth(() => {
+            showGasModal.value = true;
+          });
+        };
+
+        const copyGasScript = () => {
+          const textarea = document.createElement('textarea');
+          textarea.value = gasCodeScript;
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          document.body.appendChild(textarea);
+          textarea.select();
+          try {
+            document.execCommand('copy');
+            gasSyncStatus.value = { loading: false, message: 'GASコードをコピーしました！', type: 'success' };
+          } catch (err) {
+            gasSyncStatus.value = { loading: false, message: 'コピーに失敗しました', type: 'error' };
+          }
+          document.body.removeChild(textarea);
+        };
+
+        // 管理者認証処理
+        const requireAuth = (callback) => {
+          if (isAdminAuthenticated.value) {
+            callback();
+          } else {
+            pendingAction.value = callback;
+            authPasswordInput.value = '';
+            authErrorMessage.value = '';
+            showAuthModal.value = true;
+          }
+        };
+
+        const verifyAuthPassword = () => {
+          if (authPasswordInput.value === '1111') {
+            isAdminAuthenticated.value = true;
+            showAuthModal.value = false;
+            authErrorMessage.value = '';
+            if (pendingAction.value) {
+              pendingAction.value();
+              pendingAction.value = null;
+            }
+          } else {
+            authErrorMessage.value = 'パスワードが正しくありません';
+          }
+        };
+
+        const closeAuthModal = () => {
+          showAuthModal.value = false;
+          pendingAction.value = null;
+        };
+
+        const selectTab = (tab) => {
+          activeTab.value = tab;
+        };
+
+        const openSettings = () => {
+          requireAuth(() => {
+            showSettingsModal.value = true;
+          });
+        };
+
+        const goToInventoryFromSettings = () => {
+          showSettingsModal.value = false;
+          activeTab.value = 'inventory';
+        };
+
+        const resetAllData = () => {
+          requestConfirm(
+            'データ初期化の確認',
+            '商品・割引設定・取引履歴をすべてデフォルトの状態に戻しますか？',
+            () => {
+              items.value = JSON.parse(JSON.stringify(DEFAULT_ITEMS));
+              discountRules.value = JSON.parse(JSON.stringify(DEFAULT_DISCOUNTS));
+              salesHistory.value = [];
+              cart.value = [];
+              localStorage.clear();
+              if (autoSyncGas.value && gasUrl.value) syncToGoogleSheets(true);
+            }
+          );
+        };
+
+        // カート操作
+        const addToCart = (item) => {
+          if (!isOperating.value || item.stock <= 0) return;
+          const existing = cart.value.find(c => String(c.item.id) === String(item.id));
+          if (existing) {
+            if (existing.qty < item.stock) existing.qty++;
+          } else {
+            cart.value.push({ item, qty: 1 });
+          }
+        };
+
+        const updateCartQty = (itemId, delta) => {
+          const index = cart.value.findIndex(c => String(c.item.id) === String(itemId));
+          if (index !== -1) {
+            cart.value[index].qty += delta;
+            if (cart.value[index].qty <= 0) {
+              cart.value.splice(index, 1);
+            }
+          }
+        };
+
+        const getCartQty = (itemId) => {
+          const entry = cart.value.find(c => String(c.item.id) === String(itemId));
+          return entry ? entry.qty : 0;
+        };
+
+        const clearCart = () => {
+          cart.value = [];
+        };
+
+        const cartTotalQty = computed(() => cart.value.reduce((sum, c) => sum + c.qty, 0));
+        const cartSubtotal = computed(() => cart.value.reduce((sum, c) => sum + (c.item.price * c.qty), 0));
+
+        // セット割引計算エンジン
+        const appliedDiscounts = computed(() => {
+          if (cart.value.length === 0 || discountRules.value.length === 0) return [];
+
+          const availableItems = cart.value.map(c => ({
+            id: String(c.item.id),
+            name: c.item.name,
+            category: c.item.category,
+            price: Number(c.item.price) || 0,
+            qty: c.qty
+          }));
+
+          const results = [];
+          let matchedAny = true;
+
+          while (matchedAny) {
+            matchedAny = false;
+            let bestRuleForStep = null;
+            let bestDiscountAmount = -1;
+
+            for (const rule of discountRules.value) {
+              let canApply = false;
+              let targetItemIndices = [];
+
+              if (rule.conditionType === 'genre' && Array.isArray(rule.genres) && rule.genres.length > 0) {
+                const indices = [];
+                let valid = true;
+                const tempQty = availableItems.map(i => i.qty);
+
+                for (const gen of rule.genres) {
+                  let bestIdx = -1;
+                  let maxPrice = -1;
+                  for (let i = 0; i < availableItems.length; i++) {
+                    if (availableItems[i].category === gen && tempQty[i] > 0) {
+                      if (availableItems[i].price > maxPrice) {
+                        maxPrice = availableItems[i].price;
+                        bestIdx = i;
+                      }
+                    }
+                  }
+
+                  if (bestIdx !== -1) {
+                    indices.push(bestIdx);
+                    tempQty[bestIdx]--;
+                  } else {
+                    valid = false;
+                    break;
+                  }
+                }
+                if (valid) {
+                  canApply = true;
+                  targetItemIndices = indices;
+                }
+              } else if (rule.conditionType === 'item' && Array.isArray(rule.itemIds) && rule.itemIds.length > 0) {
+                const indices = [];
+                let valid = true;
+                const tempQty = availableItems.map(i => i.qty);
+
+                for (const reqId of rule.itemIds) {
+                  let bestIdx = -1;
+                  let maxPrice = -1;
+                  for (let i = 0; i < availableItems.length; i++) {
+                    if (String(availableItems[i].id) === String(reqId) && tempQty[i] > 0) {
+                      if (availableItems[i].price > maxPrice) {
+                        maxPrice = availableItems[i].price;
+                        bestIdx = i;
+                      }
+                    }
+                  }
+
+                  if (bestIdx !== -1) {
+                    indices.push(bestIdx);
+                    tempQty[bestIdx]--;
+                  } else {
+                    valid = false;
+                    break;
+                  }
+                }
+                if (valid) {
+                  canApply = true;
+                  targetItemIndices = indices;
+                }
+              }
+
+              if (canApply) {
+                const setSum = targetItemIndices.reduce((sum, idx) => sum + availableItems[idx].price, 0);
+                let discountAmt = 0;
+                const val = Number(rule.value) || 0;
+
+                if (rule.type === 'amount') {
+                  discountAmt = val;
+                } else if (rule.type === 'percent') {
+                  discountAmt = Math.round(setSum * (val / 100));
+                } else if (rule.type === 'fixed') {
+                  discountAmt = Math.max(0, setSum - val);
+                }
+
+                if (discountAmt > bestDiscountAmount) {
+                  bestDiscountAmount = discountAmt;
+                  bestRuleForStep = {
+                    rule,
+                    targetItemIndices,
+                    discountAmt
+                  };
+                }
+              }
+            }
+
+            if (bestRuleForStep && bestDiscountAmount > 0) {
+              matchedAny = true;
+              bestRuleForStep.targetItemIndices.forEach(idx => {
+                availableItems[idx].qty--;
+              });
+
+              const existingResult = results.find(r => r.ruleId === bestRuleForStep.rule.id);
+              if (existingResult) {
+                existingResult.times++;
+                existingResult.totalDiscountAmount += bestDiscountAmount;
+              } else {
+                results.push({
+                  ruleId: bestRuleForStep.rule.id,
+                  name: bestRuleForStep.rule.name,
+                  times: 1,
+                  unitDiscountAmount: bestDiscountAmount,
+                  totalDiscountAmount: bestDiscountAmount
+                });
+              }
+            }
+          }
+
+          return results;
+        });
+
+        const totalDiscountAmount = computed(() => {
+          return appliedDiscounts.value.reduce((sum, d) => sum + d.totalDiscountAmount, 0);
+        });
+
+        const cartFinalTotal = computed(() => {
+          return Math.max(0, cartSubtotal.value - totalDiscountAmount.value);
+        });
+
+        // 会計モーダル & テンキー
+        const openCheckoutModal = () => {
+          paidAmount.value = cartFinalTotal.value;
+          showCheckoutModal.value = true;
+          showMobileCart.value = false;
+        };
+
+        const setPaidAmount = (amt) => paidAmount.value = amt;
+        const addPaidAmount = (amt) => paidAmount.value += amt;
+        const clearPaidAmount = () => paidAmount.value = 0;
+
+        const appendNumpad = (val) => {
+          if (paidAmount.value === cartFinalTotal.value) paidAmount.value = 0;
+          const currentStr = paidAmount.value.toString();
+          paidAmount.value = parseInt(currentStr + val.toString()) || 0;
+        };
+
+        const changeAmount = computed(() => paidAmount.value - cartFinalTotal.value);
+
+        const completeCheckout = () => {
+          if (changeAmount.value < 0) return;
+
+          cart.value.forEach(c => {
+            const item = items.value.find(i => String(i.id) === String(c.item.id));
+            if (item) {
+              item.stock = Math.max(0, item.stock - c.qty);
+            }
+          });
+
+          const newTx = {
+            id: 'TX' + Date.now().toString().slice(-6),
+            timestamp: new Date().toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+            items: cart.value.map(c => ({ name: c.item.name, price: c.item.price, qty: c.qty })),
+            subtotal: cartSubtotal.value,
+            discount: totalDiscountAmount.value,
+            total: cartFinalTotal.value,
+            paid: paidAmount.value,
+            change: changeAmount.value
+          };
+
+          salesHistory.value.unshift(newTx);
+          cart.value = [];
+          showCheckoutModal.value = false;
+
+          if (autoSyncGas.value && gasUrl.value) {
+            syncToGoogleSheets(true);
+          }
+        };
+
+        // 取引取り消し
+        const openCancelModal = (tx) => {
+          cancelingTx.value = tx;
+          cancelOperatorName.value = '';
+          showCancelModal.value = true;
+        };
+
+        const executeTransactionCancel = () => {
+          if (!cancelingTx.value || !cancelOperatorName.value.trim()) return;
+
+          const tx = cancelingTx.value;
+          tx.items.forEach(itemInfo => {
+            const item = items.value.find(i => i.name === itemInfo.name);
+            if (item) item.stock += itemInfo.qty;
+          });
+
+          salesHistory.value = salesHistory.value.filter(t => t.id !== tx.id);
+          showCancelModal.value = false;
+          cancelingTx.value = null;
+          cancelOperatorName.value = '';
+
+          if (autoSyncGas.value && gasUrl.value) {
+            syncToGoogleSheets(true);
+          }
+        };
+
+        const onStockChange = () => {
+          if (autoSyncGas.value && gasUrl.value) {
+            syncToGoogleSheets(true);
+          }
+        };
+
+        const totalSalesAmount = computed(() => salesHistory.value.reduce((sum, t) => sum + t.total, 0));
+        const totalDiscountsGiven = computed(() => salesHistory.value.reduce((sum, t) => sum + t.discount, 0));
+        const averageOrderValue = computed(() => salesHistory.value.length ? Math.round(totalSalesAmount.value / salesHistory.value.length) : 0);
+
+        // 商品管理
+        const openAddProductModal = () => {
+          editingProduct.value = null;
+          productForm.value = { name: '', price: 300, category: 'sweets', stock: 50, image: '' };
+          showProductModal.value = true;
+        };
+
+        const editProduct = (item) => {
+          editingProduct.value = item;
+          productForm.value = { ...item };
+          showProductModal.value = true;
+        };
+
+        const saveProduct = () => {
+          if (!productForm.value.name) return;
+          if (editingProduct.value) {
+            Object.assign(editingProduct.value, productForm.value);
+          } else {
+            items.value.push({
+              id: Date.now().toString(),
+              ...productForm.value
+            });
+          }
+          showProductModal.value = false;
+          if (autoSyncGas.value && gasUrl.value) syncToGoogleSheets(true);
+        };
+
+        const deleteProduct = (id) => {
+          requestConfirm(
+            '商品の削除確認',
+            'この商品を削除しますか？',
+            () => {
+              items.value = items.value.filter(i => String(i.id) !== String(id));
+              if (autoSyncGas.value && gasUrl.value) syncToGoogleSheets(true);
+            }
+          );
+        };
+
+        // セット割管理
+        const openAddDiscountModal = () => {
+          discountForm.value = { name: '', conditionType: 'genre', genres: ['sweets', 'drink'], itemIds: [], type: 'fixed', value: 500 };
+          showDiscountModal.value = true;
+        };
+
+        const isDiscountFormValid = computed(() => {
+          if (!discountForm.value.name.trim() || discountForm.value.value <= 0) return false;
+          if (discountForm.value.conditionType === 'genre') {
+            return discountForm.value.genres && discountForm.value.genres.length >= 2;
+          } else {
+            return discountForm.value.itemIds && discountForm.value.itemIds.length >= 2;
+          }
+        });
+
+        const saveDiscountRule = () => {
+          if (!isDiscountFormValid.value) return;
+          discountRules.value.push({
+            id: 'd' + Date.now(),
+            name: discountForm.value.name,
+            conditionType: discountForm.value.conditionType,
+            genres: [...discountForm.value.genres],
+            itemIds: [...discountForm.value.itemIds],
+            type: discountForm.value.type,
+            value: Number(discountForm.value.value) || 0
+          });
+          showDiscountModal.value = false;
+          if (autoSyncGas.value && gasUrl.value) syncToGoogleSheets(true);
+        };
+
+        const deleteDiscountRule = (id) => {
+          discountRules.value = discountRules.value.filter(d => d.id !== id);
+          if (autoSyncGas.value && gasUrl.value) syncToGoogleSheets(true);
+        };
+
+        const getItemName = (id) => {
+          const item = items.value.find(i => String(i.id) === String(id));
+          return item ? item.name : '不明な商品';
+        };
+
+        // 表示用装飾ユーティリティ
+        const getCategoryLabel = (cat) => ({ food: 'フード', sweets: 'スイーツ', drink: 'ドリンク' }[cat] || cat);
+        const getCategoryBadgeClass = (cat) => ({
+          food: 'bg-orange-100 text-orange-700 border border-orange-200',
+          sweets: 'bg-pink-100 text-pink-700 border border-pink-200',
+          drink: 'bg-cyan-100 text-cyan-700 border border-cyan-200'
+        }[cat]);
+        const getCategoryBorderClass = (cat) => ({
+          border: 'border-orange-100 hover:border-orange-300',
+          food: 'border-orange-100 hover:border-orange-300',
+          sweets: 'border-pink-100 hover:border-pink-300',
+          drink: 'border-cyan-100 hover:border-cyan-300'
+        }[cat]);
+        const getCategoryIcon = (cat) => ({
+          food: 'fa-solid fa-utensils',
+          sweets: 'fa-solid fa-ice-cream',
+          drink: 'fa-solid fa-wine-glass'
+        }[cat]);
+
+        const handleImageError = (e) => {
+          e.target.style.display = 'none';
+        };
+
+        // CSV出力
+        const exportCSV = () => {
+          let csv = '取引ID,日時,購入明細,小計,割引額,合計額,お預かり,お釣り\n';
+          salesHistory.value.forEach(tx => {
+            const itemsStr = tx.items.map(i => `${i.name}x${i.qty}`).join(';');
+            csv += `"${tx.id}","${tx.timestamp}","${itemsStr}",${tx.subtotal},${tx.discount},${tx.total},${tx.paid},${tx.change}\n`;
+          });
+
+          const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.setAttribute('download', `千葉能登マルシェ_売上データ_${new Date().toISOString().slice(0,10)}.csv`);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        };
+
+        return {
+          activeTab,
+          showMobileCart,
+          isOperating,
+          isAdminAuthenticated,
+          showAuthModal,
+          showSettingsModal,
+          authPasswordInput,
+          authErrorMessage,
+          showGasModal,
+          gasUrl,
+          autoSyncGas,
+          showGasCodeGuide,
+          gasSyncStatus,
+          isSyncing,
+          gasCodeScript,
+          openGasModal,
+          copyGasScript,
+          fetchFromGoogleSheets,
+          syncToGoogleSheets,
+          requireAuth,
+          verifyAuthPassword,
+          closeAuthModal,
+          selectTab,
+          openSettings,
+          goToInventoryFromSettings,
+          items,
+          cart,
+          discountRules,
+          salesHistory,
+          showCheckoutModal,
+          showProductModal,
+          showDiscountModal,
+          showCancelModal,
+          cancelingTx,
+          cancelOperatorName,
+          confirmDialog,
+          requestConfirm,
+          executeConfirm,
+          paidAmount,
+          changeAmount,
+          editingProduct,
+          productForm,
+          discountForm,
+          isDiscountFormValid,
+          cartTotalQty,
+          cartSubtotal,
+          appliedDiscounts,
+          totalDiscountAmount,
+          cartFinalTotal,
+          totalSalesAmount,
+          totalDiscountsGiven,
+          averageOrderValue,
+          resetAllData,
+          addToCart,
+          updateCartQty,
+          getCartQty,
+          clearCart,
+          openCheckoutModal,
+          setPaidAmount,
+          addPaidAmount,
+          clearPaidAmount,
+          appendNumpad,
+          completeCheckout,
+          openCancelModal,
+          executeTransactionCancel,
+          onStockChange,
+          openAddProductModal,
+          editProduct,
+          saveProduct,
+          deleteProduct,
+          openAddDiscountModal,
+          saveDiscountRule,
+          deleteDiscountRule,
+          getItemName,
+          getCategoryLabel,
+          getCategoryBadgeClass,
+          getCategoryBorderClass,
+          getCategoryIcon,
+          handleImageError,
+          exportCSV
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
